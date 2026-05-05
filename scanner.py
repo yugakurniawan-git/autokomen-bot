@@ -162,13 +162,27 @@ def _do_comment(page, target_url: str, comment_text: str, is_reply: bool = False
         comment_box.click()
         time.sleep(1)
 
+        # Ambil snapshot teks komentar sebelum posting untuk verifikasi
+        first_words = " ".join(comment_text.split()[:4]).lower()
+
         for char in comment_text:
             comment_box.type(char, delay=random.randint(25, 70))
 
         time.sleep(random.randint(1, 2))
         comment_box.press("Enter")
-        time.sleep(3)
-        return True
+
+        # Tunggu dan verifikasi komentar benar-benar muncul di halaman
+        time.sleep(6)
+        try:
+            page_text = page.inner_text("body").lower()
+            if first_words in page_text:
+                return True
+            else:
+                print("   ⚠️ Komentar dikirim tapi tidak muncul di halaman (mungkin diblokir FB).")
+                return False
+        except Exception:
+            # Kalau tidak bisa verifikasi, anggap gagal agar tidak salah catat
+            return False
 
     except Exception as e:
         print(f"   ⚠️ Gagal posting komentar: {e}")
