@@ -1,0 +1,11 @@
+services:
+  bantukos-autokomen-bot:
+    build: .
+    restart: unless-stopped
+    volumes:
+      # Persistent: database autokomen dan sesi browser Facebook
+      - ./data:/app/data
+      # Baca listing dari bantukos-bot (read-only)
+      - /data/bantukos/bantukos.db:/app/bantukos.db:ro
+    env_file:
+      - .env
