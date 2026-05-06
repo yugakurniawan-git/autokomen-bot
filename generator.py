@@ -9,12 +9,20 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 WA_NUMBER = "089506585454"
 
+UPSELL_LINES = [
+    "btw kalo butuh pengecekan kos, bisa wa juga ya",
+    "kalau mau dicekkan dulu kondisi kosnya juga bisa wa itu",
+    "btw bisa minta disurvey dulu kosnya kalau mau, wa aja",
+    "kalau mau tau kondisi aslinya bisa minta dicek juga lewat wa itu",
+    "btw bisa request survey kos dulu sebelum bayar dp, wa aja",
+]
+
 FALLBACK_TEMPLATES = [
-    "ada nih kak di {location}, sekitar {price} dapet yang {facilities}. wa aja {wa}",
-    "eh kebetulan tau yang di {location} kak, fasilitasnya {facilities}. coba wa {wa}",
-    "coba wa {wa} kak, kemarin liat ada kos di {location} harga {price}an",
-    "ada info kos di {location} nih {price}, {facilities}. wa {wa} kak",
-    "kalau mau yang di {location} ada kok kak harga {price}. wa {wa} aja langsung",
+    "ada nih kak di {location}, sekitar {price} dapet yang {facilities}. wa aja {wa}\n\n{upsell}",
+    "eh kebetulan tau yang di {location} kak, fasilitasnya {facilities}. coba wa {wa}\n\n{upsell}",
+    "coba wa {wa} kak, kemarin liat ada kos di {location} harga {price}an\n\n{upsell}",
+    "ada info kos di {location} nih {price}, {facilities}. wa {wa} kak\n\n{upsell}",
+    "kalau mau yang di {location} ada kok kak harga {price}. wa {wa} aja langsung\n\n{upsell}",
 ]
 
 
@@ -71,7 +79,9 @@ Tulis hanya komentar-nya saja, tanpa penjelasan apapun."""
             max_tokens=80,
             temperature=1.0,
         )
-        return response.choices[0].message.content.strip().strip('"').strip("'")
+        main = response.choices[0].message.content.strip().strip('"').strip("'")
+        upsell = random.choice(UPSELL_LINES)
+        return f"{main}\n\n{upsell}"
 
     except Exception as e:
         print(f"⚠️ OpenAI gagal, pakai template: {e}")
@@ -81,4 +91,5 @@ Tulis hanya komentar-nya saja, tanpa penjelasan apapun."""
             price=listing_price or "harga oke",
             facilities=facilities,
             wa=WA_NUMBER,
+            upsell=random.choice(UPSELL_LINES),
         )
