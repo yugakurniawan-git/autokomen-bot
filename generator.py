@@ -7,24 +7,24 @@ from config import OPENAI_API_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Template fallback kalau OpenAI gagal
+WA_NUMBER = "089506585454"
+
 FALLBACK_TEMPLATES = [
-    "Haii {name}, kebetulan ada kos di {location} nih! Harga sekitar {price}, {facilities}. Kalau minat bisa PM atau cek @bantukos 😊",
-    "Hai kak {name}, kami punya info kos di {location}, harga {price}. {facilities} Minat? DM aja ya 🙏",
-    "Kak {name} coba cek @bantukos, ada listing kos di {location} harga {price}. {facilities}",
-    "Info kos daerah {location}: harga {price}, {facilities}. Bisa PM kalau tertarik kak {name} 😊",
-    "Ada nih kak {name}, kos di {location} harga {price}. {facilities} DM @bantukos untuk detail lengkap 🏠",
+    "ada nih kak di {location}, sekitar {price} dapet yang {facilities}. wa aja {wa}",
+    "eh kebetulan tau yang di {location} kak, fasilitasnya {facilities}. coba wa {wa}",
+    "coba wa {wa} kak, kemarin liat ada kos di {location} harga {price}an",
+    "ada info kos di {location} nih {price}, {facilities}. wa {wa} kak",
+    "kalau mau yang di {location} ada kok kak harga {price}. wa {wa} aja langsung",
 ]
 
 
 def _extract_facilities(caption: str) -> str:
-    """Ambil fasilitas singkat dari caption."""
     keywords = ["AC", "wifi", "kamar mandi dalam", "kamar mandi luar",
                 "furnished", "parkir", "dapur", "air panas"]
     found = [k for k in keywords if k.lower() in (caption or "").lower()]
     if found:
-        return ", ".join(found[:3]) + "."
-    return ""
+        return ", ".join(found[:3])
+    return "lumayan lengkap"
 
 
 def generate_comment(
@@ -35,45 +35,50 @@ def generate_comment(
     listing_price: str,
     listing_caption: str,
 ) -> str:
-    """
-    Generate komentar natural menggunakan OpenAI.
-    Fallback ke template kalau API gagal.
-    """
     facilities = _extract_facilities(listing_caption)
-    name = poster_name.split()[0] if poster_name else "kak"
+    name = poster_name.split()[0] if poster_name and poster_name.lower() != "kak" else ""
+    name_part = f" {name}" if name else ""
 
     try:
-        prompt = f"""Kamu adalah agen properti kos di Bali yang ramah dan natural.
-Seseorang mencari kos di area {sought_location or 'Bali'}.
-Kamu punya listing kos berikut untuk ditawarkan:
+        prompt = f"""Kamu orang biasa yang kebetulan tau info kos dan lagi baca komentar Facebook.
+Ada orang yang lagi cari kos di {sought_location or 'Bali'}.
+Kamu mau kasih info kos ini:
 - Lokasi: {listing_location}
-- Harga: {listing_price or 'hubungi kami'}
-- Fasilitas: {facilities or 'lengkap'}
+- Harga: {listing_price or 'bisa nego'}
+- Fasilitas: {facilities}
+- Nomor WA untuk tanya-tanya: {WA_NUMBER}
 
 Tulis 1 komentar Facebook yang:
-- Natural seperti orang biasa (bukan iklan)
-- Singkat, 2-3 kalimat saja
-- Sebutkan nama mereka: {name}
-- Sebutkan lokasi dan harga
-- Akhiri dengan ajakan PM/DM ke @bantukos
-- Pakai 1-2 emoji yang relevan
-- Bahasa Indonesia informal/santai
-- JANGAN pakai hashtag
-"""
+- Terasa seperti komentar orang nyata, bukan iklan atau agen properti
+- Sangat singkat, 1-2 kalimat saja, maksimal 25 kata
+- Kasual dan santai, boleh tidak pakai huruf kapital
+- Boleh singkat seperti: "ada nih di Sesetan, wa 089506585454 kak"
+- Sebutkan nomor WA {WA_NUMBER} sebagai cara menghubungi
+- Boleh sebut nama{name_part} kalau terasa natural, boleh juga tidak
+- Tidak perlu emoji, atau paling banyak 1
+- JANGAN sebut @bantukos, jangan pakai hashtag, jangan terdengar seperti sales
+
+Contoh gaya yang benar:
+"ada nih kak di sesetan, sekitar 750rb dapet yang AC wifi. wa {WA_NUMBER}"
+"eh kebetulan tau yang di kerobokan, coba wa {WA_NUMBER} aja"
+"kalau mau daerah {sought_location or 'sana'} ada kok, wa {WA_NUMBER}"
+
+Tulis hanya komentar-nya saja, tanpa penjelasan apapun."""
+
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=150,
-            temperature=0.9,  # lebih variatif
+            max_tokens=80,
+            temperature=1.0,
         )
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip().strip('"').strip("'")
 
     except Exception as e:
         print(f"⚠️ OpenAI gagal, pakai template: {e}")
         template = random.choice(FALLBACK_TEMPLATES)
         return template.format(
-            name=name,
             location=listing_location or sought_location or "Bali",
-            price=listing_price or "hubungi kami",
+            price=listing_price or "harga oke",
             facilities=facilities,
+            wa=WA_NUMBER,
         )
