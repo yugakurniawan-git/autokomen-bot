@@ -7,22 +7,20 @@ from config import OPENAI_API_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-WA_NUMBER = "089506585454"
-
 UPSELL_LINES = [
-    "btw kalo butuh pengecekan kos, bisa wa juga ya",
-    "kalau mau dicekkan dulu kondisi kosnya juga bisa wa itu",
-    "btw bisa minta disurvey dulu kosnya kalau mau, wa aja",
-    "kalau mau tau kondisi aslinya bisa minta dicek juga lewat wa itu",
-    "btw bisa request survey kos dulu sebelum bayar dp, wa aja",
+    "btw kalo butuh pengecekan kos sebelum dp, cek bantukos.com",
+    "kalau mau dicekkan dulu kondisi kosnya, info di bantukos.com",
+    "btw bisa minta disurvey dulu kosnya, cek bantukos.com aja",
+    "kalau mau tau kondisi aslinya sebelum bayar, ada di bantukos.com",
+    "btw ada jasa cek kos dulu sebelum dp di bantukos.com",
 ]
 
 FALLBACK_TEMPLATES = [
-    "ada nih kak di {location}, sekitar {price} dapet yang {facilities}. wa aja {wa}\n\n{upsell}",
-    "eh kebetulan tau yang di {location} kak, fasilitasnya {facilities}. coba wa {wa}\n\n{upsell}",
-    "coba wa {wa} kak, kemarin liat ada kos di {location} harga {price}an\n\n{upsell}",
-    "ada info kos di {location} nih {price}, {facilities}. wa {wa} kak\n\n{upsell}",
-    "kalau mau yang di {location} ada kok kak harga {price}. wa {wa} aja langsung\n\n{upsell}",
+    "ada nih kak di {location}, sekitar {price} dapet yang {facilities}. dm aja\n\n{upsell}",
+    "eh kebetulan tau yang di {location} kak, fasilitasnya {facilities}. dm aja kak\n\n{upsell}",
+    "kemarin liat ada kos di {location} harga {price}an, dm kalau mau info\n\n{upsell}",
+    "ada info kos di {location} nih {price}, {facilities}. dm aja\n\n{upsell}",
+    "kalau mau yang di {location} ada kok kak harga {price}. dm aja\n\n{upsell}",
 ]
 
 
@@ -54,22 +52,21 @@ Kamu mau kasih info kos ini:
 - Lokasi: {listing_location}
 - Harga: {listing_price or 'bisa nego'}
 - Fasilitas: {facilities}
-- Nomor WA untuk tanya-tanya: {WA_NUMBER}
 
 Tulis 1 komentar Facebook yang:
 - Terasa seperti komentar orang nyata, bukan iklan atau agen properti
 - Sangat singkat, 1-2 kalimat saja, maksimal 25 kata
 - Kasual dan santai, boleh tidak pakai huruf kapital
 - Boleh singkat seperti: "ada nih di Sesetan, wa 089506585454 kak"
-- Sebutkan nomor WA {WA_NUMBER} sebagai cara menghubungi
+- Akhiri dengan ajakan "dm aja" atau "dm kak" — JANGAN sebut nomor WA atau link apapun
 - Boleh sebut nama{name_part} kalau terasa natural, boleh juga tidak
 - Tidak perlu emoji, atau paling banyak 1
 - JANGAN sebut @bantukos, jangan pakai hashtag, jangan terdengar seperti sales
 
 Contoh gaya yang benar:
-"ada nih kak di sesetan, sekitar 750rb dapet yang AC wifi. wa {WA_NUMBER}"
-"eh kebetulan tau yang di kerobokan, coba wa {WA_NUMBER} aja"
-"kalau mau daerah {sought_location or 'sana'} ada kok, wa {WA_NUMBER}"
+"ada nih kak di sesetan, sekitar 750rb dapet yang AC wifi. dm aja"
+"eh kebetulan tau yang di kerobokan, fasilitasnya lumayan. dm kalau mau info"
+"kalau mau daerah {sought_location or 'sana'} ada kok, dm aja kak"
 
 Tulis hanya komentar-nya saja, tanpa penjelasan apapun."""
 
@@ -90,6 +87,5 @@ Tulis hanya komentar-nya saja, tanpa penjelasan apapun."""
             location=listing_location or sought_location or "Bali",
             price=listing_price or "harga oke",
             facilities=facilities,
-            wa=WA_NUMBER,
             upsell=random.choice(UPSELL_LINES),
         )
