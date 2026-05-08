@@ -8,11 +8,11 @@ from config import OPENAI_API_KEY
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 UPSELL_LINES = [
-    "btw kalo butuh pengecekan kos sebelum dp, cek bantukos.com",
-    "kalau mau dicekkan dulu kondisi kosnya, info di bantukos.com",
-    "btw bisa minta disurvey dulu kosnya, cek bantukos.com aja",
-    "kalau mau tau kondisi aslinya sebelum bayar, ada di bantukos.com",
-    "btw ada jasa cek kos dulu sebelum dp di bantukos.com",
+    "btw kalo mau survey dulu sebelum dp, dm aja",
+    "kalau mau dicekkan dulu kondisi kosnya sebelum bayar, dm aja",
+    "btw bisa minta disurvey dulu kosnya, dm kak",
+    "kalau mau tau kondisi aslinya sebelum dp, dm aja",
+    "btw ada yang bisa bantu cek kos dulu sebelum dp, dm kak",
 ]
 
 FALLBACK_TEMPLATES = [
@@ -78,7 +78,10 @@ Tulis hanya komentar-nya saja, tanpa penjelasan apapun."""
         )
         main = response.choices[0].message.content.strip().strip('"').strip("'")
         upsell = random.choice(UPSELL_LINES)
-        return f"{main}\n\n{upsell}"
+        # Only append upsell if main doesn't already mention dm
+        if "dm" not in main.lower():
+            return f"{main}\n\n{upsell}"
+        return main
 
     except Exception as e:
         print(f"⚠️ OpenAI gagal, pakai template: {e}")
