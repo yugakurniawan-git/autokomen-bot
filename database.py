@@ -76,8 +76,9 @@ def find_matching_listings(sought_location: str, limit: int = 3) -> list:
                 SELECT id, location, price, contact, image_paths, caption
                 FROM posts
                 WHERE status IN ('captioned', 'posted')
+                  AND contact IS NOT NULL AND contact != ''
                   AND LOWER(location) LIKE ?
-                ORDER BY RANDOM()
+                ORDER BY COALESCE(verified, 0) DESC, RANDOM()
                 LIMIT ?
             """, (f"%{area}%", limit))
         else:
@@ -85,7 +86,8 @@ def find_matching_listings(sought_location: str, limit: int = 3) -> list:
                 SELECT id, location, price, contact, image_paths, caption
                 FROM posts
                 WHERE status IN ('captioned', 'posted')
-                ORDER BY RANDOM()
+                  AND contact IS NOT NULL AND contact != ''
+                ORDER BY COALESCE(verified, 0) DESC, RANDOM()
                 LIMIT ?
             """, (limit,))
 
