@@ -216,6 +216,14 @@ def _get_listings_for_area(location: str, limit: int = 3) -> list[dict]:
             WHERE status IN ('captioned', 'posted')
               AND price IS NOT NULL AND price != ''
               AND LOWER(location) LIKE ?
+              AND (
+                price LIKE 'Rp %'
+                OR price LIKE '%jt%'
+                OR price LIKE '%juta%'
+                OR price LIKE '%rb/bln%'
+                OR price LIKE '%rb/bulan%'
+              )
+              AND length(price) < 25
             ORDER BY RANDOM()
             LIMIT ?
         """, (f'%{area_kw}%', limit)).fetchall()
