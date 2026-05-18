@@ -128,12 +128,12 @@ Scan grup (tiap 60 menit)
 
 Balas notif dengan:
 ```
-kirim outreach abc123
+lead kirim abc123
 ```
 Bot langsung kirim draft ke WA pencari kos. Konfirmasi terkirim muncul sebagai reply.
 
-> **Catatan:** `kirim outreach` = kirim ke **pencari kos** (client).
-> Berbeda dengan `check kirim` = kirim ke **owner kos** di database.
+> **Catatan:** `lead kirim` = kirim ke **pencari kos** (client).
+> Berbeda dengan `owner kirim` = kirim ke **owner kos** di database.
 
 ### Batas harian
 ```
@@ -154,29 +154,29 @@ Semua command dikirim ke **Saved Messages** bot (self-chat).
 | `#34` | Detail listing #34 |
 | `stat` | Statistik database |
 
-### Cek Ketersediaan Owner Kos
+### Owner Kos
 | Command | Keterangan |
 |---------|-----------|
-| `check` | Lihat owner yang belum dihubungi |
-| `check preview` | Contoh pesan yang akan dikirim ke owner |
-| `check kirim` | Kirim WA ke owner kos (max 10 per run) |
-| `check add 08xxx` | Tambah nomor owner manual ke daftar intercept |
+| `owner list` | 15 listing terbaru |
+| `owner cek` | Lihat owner yang belum dihubungi |
+| `owner preview` | Contoh pesan yang akan dikirim ke owner |
+| `owner kirim` | Kirim WA ke owner kos (max 10 per run) |
+| `owner add 08xxx` | Tambah nomor owner manual ke daftar intercept |
+| `owner verify #34` | Tandai listing #34 masih kosong |
+| `owner flow` | Panduan alur lengkap cek owner |
 
-### Verifikasi Owner Kos
+### Lead (Pencari Kos)
 | Command | Keterangan |
 |---------|-----------|
-| `verify #34` | Tandai listing #34 masih kosong |
-
-### SupportKos Outreach (Pencari Kos)
-| Command | Keterangan |
-|---------|-----------|
-| `kirim outreach <id>` | Kirim draft WA ke pencari kos (id ada di notif) |
+| `lead kirim <id>` | Kirim draft WA ke pencari kos (id ada di notif) |
 
 ### Lainnya
 | Command | Keterangan |
 |---------|-----------|
 | `help` | Tampilkan semua command |
-| `help flow` | Panduan alur cek owner |
+| `stat` | Statistik database |
+| `cari <keyword>` | Cari listing by keyword |
+| `#34` | Detail listing #34 |
 
 ---
 

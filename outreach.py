@@ -452,7 +452,7 @@ def notify_owner_wa(
             f"🔗 Lihat post: {post_url}\n\n"
             f"✍️ *Draft pesan WA:*\n"
             f"---\n{dm_draft}\n---\n\n"
-            f"👉 Balas *kirim outreach {lead_id}* untuk langsung kirim\n"
+            f"👉 Balas *lead kirim {lead_id}* untuk langsung kirim\n"
             f"   atau klik {wa_link} → paste draft manual"
         )
     elif source_type == 'comment':
