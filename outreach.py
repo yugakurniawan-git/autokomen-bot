@@ -205,41 +205,35 @@ def _extract_location(text: str) -> str:
 
 # ── Listing lookup ────────────────────────────────────────────────────────────
 
-def _get_listings_for_area(location: str, limit: int = 3) -> list[dict]:
-    """Ambil listing dari bantukos.db yang lokasinya cocok dengan area yang dicari."""
+def _get_specific_locations_for_area(location: str, limit: int = 2) -> list[str]:
+    """
+    Ambil contoh lokasi spesifik (yang punya nama jalan/gang/area detail) dari bantukos.db.
+    Diprioritaskan berdasarkan panjang string lokasi — makin panjang, makin spesifik.
+    """
     try:
         conn = sqlite3.connect(BANTUKOS_DB_PATH)
         area_kw = location.lower().split()[0] if location else ''
         rows = conn.execute("""
-            SELECT location, price
+            SELECT DISTINCT location
             FROM posts
             WHERE status IN ('captioned', 'posted')
-              AND price IS NOT NULL AND price != ''
               AND LOWER(location) LIKE ?
+              AND length(location) > length(?)  -- lebih dari sekedar nama area
+              AND location NOT LIKE '%Bali%'
               AND (
                 price LIKE 'Rp %'
                 OR price LIKE '%jt%'
                 OR price LIKE '%juta%'
                 OR price LIKE '%rb/bln%'
-                OR price LIKE '%rb/bulan%'
               )
-              AND length(price) < 25
-            ORDER BY RANDOM()
+            ORDER BY length(location) DESC
             LIMIT ?
-        """, (f'%{area_kw}%', limit)).fetchall()
+        """, (f'%{area_kw}%', location, limit)).fetchall()
         conn.close()
-        return [{'location': r[0], 'price': r[1]} for r in rows if r[0] and r[1]]
+        return [r[0] for r in rows if r[0]]
     except Exception as e:
-        print(f"⚠️ Gagal ambil listing untuk draft: {e}")
+        print(f"⚠️ Gagal ambil lokasi spesifik: {e}")
         return []
-
-
-def _format_listings_snippet(listings: list[dict]) -> str:
-    """Format listing jadi teks pendek untuk dimasukkan ke draft."""
-    if not listings:
-        return ''
-    lines = [f"- {l['location']} · {l['price']}" for l in listings]
-    return '\n'.join(lines)
 
 
 # ── DM Draft Generator ────────────────────────────────────────────────────────
@@ -248,59 +242,56 @@ BANTUKOS_URL = "https://bantukos.com/listings"
 
 
 def generate_dm_draft(poster_name: str, post_text: str, location: str, via_wa: bool = False) -> str:
-    first_name = poster_name.split()[0] if poster_name else "Kak"
-    loc = location or "Bali"
+    first_name = poster_name.split()[0] if poster_name else ""
+    name_part  = f"Kak {first_name}" if first_name else "Kak"
+    loc        = location or "Bali"
 
-    listings = _get_listings_for_area(loc)
-    listings_text = _format_listings_snippet(listings)
+    specific_locs = _get_specific_locations_for_area(loc)
+    loc_detail = specific_locs[0] if specific_locs else loc
 
     # Fallback templates — dipakai kalau OpenAI gagal
-    if listings_text:
-        listing_block = f"\n\nBeberapa yang lagi kosong di {loc}:\n{listings_text}\n\nInfo lengkapnya bisa cek di {BANTUKOS_URL}"
-    else:
-        listing_block = f"\n\nCek juga listing lengkapnya di {BANTUKOS_URL}"
-
     if via_wa:
         fallback = (
-            f"Halo {first_name}, kebetulan aku tau ada beberapa kos di {loc} yang lagi kosong 👋"
-            f"{listing_block}\n\n"
-            f"Kalau mau aku bantuin survei dulu sebelum DP, bilang aja ya. Bisa foto kondisi aslinya biar kamu nggak kaget pas udah bayar 🙏"
+            f"Halo {name_part}, ada beberapa kos di {loc_detail} yang lagi kosong nih 👋 "
+            f"Bisa cek langsung di bantukos.com/listings ya. "
+            f"Kalau mau aku bantuin survei kondisi aslinya dulu sebelum DP juga bisa, biar nggak kaget 🙏"
         )
     else:
         fallback = (
-            f"Halo {first_name}! Kebetulan aku tau ada beberapa kos di {loc} yang lagi kosong 👋"
-            f"{listing_block}\n\n"
-            f"Kalau mau, aku juga bisa bantu survei kondisi aslinya dulu sebelum kamu DP. Jadi kamu tau beneran kayak gimana sebelum bayar. Tertarik?"
+            f"Halo {name_part}! Ada beberapa kos di {loc_detail} yang lagi kosong nih 👋\n\n"
+            f"Bisa cek list lengkapnya di bantukos.com/listings ya, nanti filter aja daerah {loc}.\n\n"
+            f"Kalau mau, aku juga bisa bantu survei kondisi aslinya dulu sebelum kamu DP — jadi tau beneran kayak gimana sebelum bayar. Tertarik?"
         )
 
     if not OPENAI_API_KEY:
         return fallback
 
-    listing_ctx = (
-        f"Kos yang tersedia di {loc}:\n{listings_text}\n\nLink listing lengkap: {BANTUKOS_URL}"
-        if listings_text else
-        f"Link listing: {BANTUKOS_URL}"
+    loc_ctx = (
+        f"Contoh lokasi kos yang tersedia: {loc_detail}"
+        if loc_detail != loc else
+        f"Area yang dicari: {loc}"
     )
     channel = "WhatsApp (2-3 kalimat, ringkas)" if via_wa else "Facebook DM (3-5 kalimat)"
 
     try:
         from openai import OpenAI
         client = OpenAI(api_key=OPENAI_API_KEY)
-        prompt = f"""Kamu seorang teman yang tau info kos dan mau bantu orang cari kos.
+        prompt = f"""Kamu seorang teman yang tau info kos dan genuinely mau bantu orang cari kos.
 
-Seseorang bernama "{first_name}" lagi cari kos di {loc}.
+Seseorang bernama "{name_part}" lagi cari kos di {loc}.
 Post mereka: "{post_text[:200]}"
 
-{listing_ctx}
+{loc_ctx}
+Link untuk cek semua listing: bantukos.com/listings (filter daerah {loc})
 
 Tulis pesan {channel} yang:
-- Terasa ditulis manusia beneran, bukan agen properti atau AI
-- Sebutkan 1-2 kos yang tersedia di atas secara natural (lokasi + harga), jangan listing semua
-- Sertakan link {BANTUKOS_URL} dengan natural (misal "cek di bantukos.com/listings")
-- Tawarin juga jasa survei sebelum DP — tapi kasual, kayak teman yang genuinely mau bantu
-- Bahasa sehari-hari, boleh campur gaul, tidak perlu formal
-- Jangan sebut "SupportKos" atau nama layanan apapun, cukup bilang "aku bisa bantu survei/cek"
-- Tutup dengan pertanyaan singkat biar terasa natural (bukan CTA hard-sell)
+- Terasa kayak ditulis orang biasa, bukan agen atau AI — santai, natural
+- Sebut lokasi kos yang spesifik kalau ada (contoh: "{loc_detail}"), bukan cuma "{loc}" doang
+- Arahkan ke bantukos.com/listings secara natural untuk cek list lengkapnya (jangan sebut URL panjang, cukup "bantukos.com/listings")
+- Tawarin juga jasa survei/cek kondisi kos sebelum DP dengan kasual
+- Bahasa sehari-hari, boleh gaul, campur Indonesia-Inggris oke
+- Jangan sebut nama layanan apapun, cukup "aku bisa bantu survei/cekkan"
+- Tutup dengan pertanyaan pendek yang terasa natural, bukan hard-sell
 
 Tulis isi pesan saja, tanpa penjelasan atau tanda kutip."""
 
