@@ -205,34 +205,80 @@ def _extract_location(text: str) -> str:
 
 # ── Listing lookup ────────────────────────────────────────────────────────────
 
-def _get_specific_locations_for_area(location: str, limit: int = 2) -> list[str]:
+def _clean_price(price: str) -> str:
+    """Normalisasi harga ke format ringkas. Return '' jika tidak valid."""
+    p = (price or '').strip()
+    if not p or p in ('N/A', 'Hubungi pemilik', '-'):
+        return ''
+    # Sudah bersih: "Rp 1.2jt/bln" atau "Rp 800rb/bln"
+    if p.startswith('Rp ') and ('/bln' in p or '/bulan' in p):
+        return p.replace('/bulan', '/bln')
+    # Angka mentah: "2jt", "1.5jt", "800k", "1200000" dll
+    import re as _re
+    m = _re.search(r'([\d][.,\d]*)\s*(jt|juta|rb|ribu|k)?', p.lower().replace(' ', ''))
+    if not m:
+        return ''
+    try:
+        num = float(m.group(1).replace(',', '.'))
+        suffix = (m.group(2) or '').lower()
+        if 'jt' in suffix or 'juta' in suffix:
+            amt = int(num * 1_000_000)
+        elif suffix in ('rb', 'ribu', 'k'):
+            amt = int(num * 1_000)
+        else:
+            amt = int(num * 1_000_000) if num < 10 else int(num * 1_000) if num < 10_000 else int(num)
+        if not (400_000 <= amt <= 8_000_000):
+            return ''
+        if amt >= 1_000_000:
+            label = f"{amt/1_000_000:.1f}".rstrip('0').rstrip('.')
+            return f"Rp {label}jt/bln"
+        return f"Rp {amt // 1000}rb/bln"
+    except (ValueError, TypeError):
+        return ''
+
+
+def _get_listings_for_area(location: str, limit: int = 3) -> list[dict]:
     """
-    Ambil contoh lokasi spesifik (yang punya nama jalan/gang/area detail) dari bantukos.db.
-    Diprioritaskan berdasarkan panjang string lokasi — makin panjang, makin spesifik.
+    Ambil listing dari bantukos.db dengan lokasi spesifik + harga bersih.
+    Prioritas: lokasi yang punya detail (jalan/area spesifik).
     """
     try:
         conn = sqlite3.connect(BANTUKOS_DB_PATH)
         area_kw = location.lower().split()[0] if location else ''
+        # Ambil lebih banyak, lalu filter & sort di Python
         rows = conn.execute("""
-            SELECT DISTINCT location
+            SELECT location, price
             FROM posts
             WHERE status IN ('captioned', 'posted')
               AND LOWER(location) LIKE ?
-              AND length(location) > length(?)  -- lebih dari sekedar nama area
+              AND price IS NOT NULL AND price != ''
+              AND price NOT LIKE '%Hubungi%'
+              AND price NOT LIKE '%N/A%'
               AND location NOT LIKE '%Bali%'
-              AND (
-                price LIKE 'Rp %'
-                OR price LIKE '%jt%'
-                OR price LIKE '%juta%'
-                OR price LIKE '%rb/bln%'
-              )
-            ORDER BY length(location) DESC
-            LIMIT ?
-        """, (f'%{area_kw}%', location, limit)).fetchall()
+            ORDER BY length(location) DESC, RANDOM()
+            LIMIT 20
+        """, (f'%{area_kw}%',)).fetchall()
         conn.close()
-        return [r[0] for r in rows if r[0]]
+
+        results = []
+        seen_locs = set()
+        for loc_raw, price_raw in rows:
+            if not loc_raw:
+                continue
+            clean_p = _clean_price(price_raw)
+            if not clean_p:
+                continue
+            # Deduplikasi per lokasi
+            loc_key = loc_raw.lower().strip()
+            if loc_key in seen_locs:
+                continue
+            seen_locs.add(loc_key)
+            results.append({'location': loc_raw.strip(), 'price': clean_p})
+            if len(results) >= limit:
+                break
+        return results
     except Exception as e:
-        print(f"⚠️ Gagal ambil lokasi spesifik: {e}")
+        print(f"⚠️ Gagal ambil listing untuk draft: {e}")
         return []
 
 
@@ -241,64 +287,78 @@ def _get_specific_locations_for_area(location: str, limit: int = 2) -> list[str]
 BANTUKOS_URL = "https://bantukos.com/listings"
 
 
+def _format_listings_block(listings: list[dict]) -> str:
+    if not listings:
+        return ''
+    return '\n'.join(f"• {l['location']} — {l['price']}" for l in listings)
+
+
 def generate_dm_draft(poster_name: str, post_text: str, location: str, via_wa: bool = False) -> str:
     first_name = poster_name.split()[0] if poster_name else ""
     name_part  = f"Kak {first_name}" if first_name else "Kak"
     loc        = location or "Bali"
 
-    specific_locs = _get_specific_locations_for_area(loc)
-    loc_detail = specific_locs[0] if specific_locs else loc
+    listings       = _get_listings_for_area(loc)
+    listings_block = _format_listings_block(listings)
 
     # Fallback templates — dipakai kalau OpenAI gagal
+    if listings_block:
+        listing_section = (
+            f"\n\nAda beberapa yang lagi kosong:\n{listings_block}\n\n"
+            f"Mau cek area lain atau lebih banyak? Langsung aja ke bantukos.com/listings."
+        )
+    else:
+        listing_section = f"\n\nUntuk lihat list lengkapnya bisa cek bantukos.com/listings."
+
     if via_wa:
         fallback = (
-            f"Halo {name_part}, ada beberapa kos di {loc_detail} yang lagi kosong nih 👋 "
-            f"Bisa cek langsung di bantukos.com/listings ya. "
-            f"Kalau mau aku bantuin survei kondisi aslinya dulu sebelum DP juga bisa, biar nggak kaget 🙏"
+            f"Halo {name_part}, kebetulan aku tau ada kos di {loc} yang lagi kosong 👋"
+            f"{listing_section}\n\n"
+            f"Oh iya, aku bukan calo ya — aku bisa bantu survei kondisi aslinya dulu sebelum kamu DP, "
+            f"jadi nggak kaget pas udah bayar 🙏 Mau?"
         )
     else:
         fallback = (
-            f"Halo {name_part}! Ada beberapa kos di {loc_detail} yang lagi kosong nih 👋\n\n"
-            f"Bisa cek list lengkapnya di bantukos.com/listings ya, nanti filter aja daerah {loc}.\n\n"
-            f"Kalau mau, aku juga bisa bantu survei kondisi aslinya dulu sebelum kamu DP — jadi tau beneran kayak gimana sebelum bayar. Tertarik?"
+            f"Halo {name_part}! Kebetulan tau ada kos di {loc} yang lagi kosong 👋"
+            f"{listing_section}\n\n"
+            f"Btw aku bukan calo ya. Tapi kalau mau, aku bisa bantu cek kondisi asli kosnya dulu "
+            f"sebelum kamu DP — jadi tau beneran kayak gimana sebelum bayar. Tertarik?"
         )
 
     if not OPENAI_API_KEY:
         return fallback
 
-    loc_ctx = (
-        f"Contoh lokasi kos yang tersedia: {loc_detail}"
-        if loc_detail != loc else
-        f"Area yang dicari: {loc}"
+    listing_ctx = (
+        f"Kos yang tersedia di {loc}:\n{listings_block}\n\nLink semua listing: bantukos.com/listings"
+        if listings_block else
+        f"Tidak ada listing spesifik. Arahkan ke: bantukos.com/listings"
     )
-    channel = "WhatsApp (2-3 kalimat, ringkas)" if via_wa else "Facebook DM (3-5 kalimat)"
+    channel = "WhatsApp (4-5 kalimat)" if via_wa else "Facebook DM (4-6 kalimat)"
 
     try:
         from openai import OpenAI
         client = OpenAI(api_key=OPENAI_API_KEY)
-        prompt = f"""Kamu seorang teman yang tau info kos dan genuinely mau bantu orang cari kos.
+        prompt = f"""Kamu seorang teman yang genuinely mau bantu orang cari kos, bukan agen properti.
 
 Seseorang bernama "{name_part}" lagi cari kos di {loc}.
 Post mereka: "{post_text[:200]}"
 
-{loc_ctx}
-Link untuk cek semua listing: bantukos.com/listings (filter daerah {loc})
+{listing_ctx}
 
 Tulis pesan {channel} yang:
-- Terasa kayak ditulis orang biasa, bukan agen atau AI — santai, natural
-- Sebut lokasi kos yang spesifik kalau ada (contoh: "{loc_detail}"), bukan cuma "{loc}" doang
-- Arahkan ke bantukos.com/listings secara natural untuk cek list lengkapnya (jangan sebut URL panjang, cukup "bantukos.com/listings")
-- Tawarin juga jasa survei/cek kondisi kos sebelum DP dengan kasual
-- Bahasa sehari-hari, boleh gaul, campur Indonesia-Inggris oke
-- Jangan sebut nama layanan apapun, cukup "aku bisa bantu survei/cekkan"
-- Tutup dengan pertanyaan pendek yang terasa natural, bukan hard-sell
+- WAJIB: sebutkan listing kos di atas satu per satu secara natural (nama lokasi spesifik + harga)
+- WAJIB: kasih tahu kalau mau lihat lebih banyak atau area lain bisa cek bantukos.com/listings
+- WAJIB: bilang dengan jelas bahwa kamu BUKAN CALO, tapi bisa bantu survei/cek kondisi kos sebelum ditempatin/DP
+- Terasa kayak ditulis orang biasa — santai, natural, bukan iklan
+- Bahasa sehari-hari, boleh campur gaul
+- Tutup dengan pertanyaan singkat yang natural
 
 Tulis isi pesan saja, tanpa penjelasan atau tanda kutip."""
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=220,
+            max_tokens=300,
             temperature=1.0,
         )
         return response.choices[0].message.content.strip().strip('"').strip("'")
