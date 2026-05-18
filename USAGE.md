@@ -1,10 +1,18 @@
 # Bantukos AutoKomen Bot — Panduan Penggunaan
 
-## Cara Kerja
+## Arsitektur Sistem
 
 ```
-Scan grup Facebook → Temukan post "cari kos" → Cocokkan dengan listing di DB
-→ Generate komentar via AI → Posting komentar → Catat di DB
+┌─────────────────────────────┐     ┌──────────────────────────┐
+│  bantukos-autokomen-bot     │────▶│  bantukos-wa-bot         │
+│  (Python / Playwright)      │     │  (Node.js / WA)          │
+│                             │     │                          │
+│  • Scan FB grup             │     │  • Auto-reply tamu       │
+│  • Komen di post kos        │     │  • Admin commands        │
+│  • Outreach ke pencari kos  │     │  • Notify API :3001      │
+│  • bantukos.db (listing)    │     │  • Kirim ke owner kos    │
+│  • outreach.db (leads)      │     │  • Kirim ke pencari kos  │
+└─────────────────────────────┘     └──────────────────────────┘
 ```
 
 ---
@@ -22,32 +30,32 @@ playwright install chromium
 cp .env.example .env
 # isi OPENAI_API_KEY
 # isi BANTUKOS_DB_PATH → path ke bantukos.db dari bantukos-bot
+# isi WA_NOTIFY_URL   → URL notify endpoint WA bot
 ```
 
-**3. Copy session Facebook dari bantukos-bot:**
+**3. Copy session Facebook:**
 ```bash
 cp ../bantukos-bot/data/fb_session.json data/fb_session.json
-```
-Atau export ulang session khusus akun bot (direkomendasikan):
-```bash
-cd ../bantukos-bot
-python3 facebook.py --export-session
-cp data/fb_session.json ../bantukos-autokomen-bot/data/fb_session.json
 ```
 
 ---
 
-## Commands
+## Commands (CLI)
 
 | Command | Keterangan |
 |---------|-----------|
-| `python3 main.py` | Mode terjadwal — scan tiap 30 menit |
-| `python3 main.py scan` | Scan sekali langsung |
+| `python3 main.py` | Mode terjadwal — scan tiap 30 menit + outreach tiap 60 menit |
+| `python3 main.py scan` | Scan & komen sekali langsung |
+| `python3 main.py outreach` | Outreach scan sekali langsung |
 | `python3 main.py stats` | Lihat statistik komentar hari ini |
 
 ---
 
-## Batas Keamanan (config.py)
+## Fitur 1 — Auto-Komen FB
+
+Scan grup Facebook → temukan post "cari kos" → generate komentar via AI → posting.
+
+**Batas keamanan (config.py):**
 
 | Setting | Default | Keterangan |
 |---------|---------|-----------|
@@ -55,39 +63,149 @@ cp data/fb_session.json ../bantukos-autokomen-bot/data/fb_session.json
 | `MIN_DELAY_AFTER_POST` | 15 | Menit tunggu sebelum komentar |
 | `SCAN_INTERVAL_MINUTES` | 30 | Cek grup tiap X menit |
 
-> Jangan naikkan `MAX_COMMENTS_PER_DAY` terlalu tinggi — risiko akun diblokir Facebook.
+---
+
+## Fitur 2 — SupportKos Outreach
+
+Scan grup FB untuk **pencari kos** (bukan poster listing), generate draft DM personal, kirim notif ke owner via WA bot.
+
+### Alur
+
+```
+Scan grup (tiap 60 menit)
+  │
+  ├─ Pass 1: semua POST UTAMA
+  │    Posting "cari kos di kerobokan"?
+  │    ├─ Ada nomor WA di post → notif WA + tombol kirim
+  │    └─ Tidak ada WA → notif WA + instruksi DM FB
+  │
+  └─ Pass 2: KOMENTAR semua post
+       Komentar "ada yang di kerobokan gak?"?
+       └─ Notif WA + instruksi DM FB ke komentator
+```
+
+### Format Notif yang Masuk ke WA
+
+**Kalau pencari kos punya nomor WA di postingan:**
+```
+🎯 Lead SupportKos — Via WA Langsung!
+
+👤 Nama  : Sari Dewi
+📍 Lokasi: Kerobokan
+📱 WA    : https://wa.me/628xxx
+
+📝 Post asli:
+"Cari kos daerah kerobokan dong budget 1-1.5jt"
+
+🔗 Lihat post: https://facebook.com/...
+
+✍️ Draft pesan WA:
+---
+[draft pesan yang siap dikirim]
+---
+
+👉 Balas: kirim outreach abc123
+   atau klik link WA → paste draft manual
+```
+
+**Kalau tidak ada WA (FB DM) atau dari komentar:**
+```
+💬 Lead SupportKos — Komentar FB / FB DM
+
+👤 Nama  : ...
+📍 Lokasi: ...
+🔗 Profil FB: ...
+
+[isi komentar/post]
+
+✍️ Draft DM FB:
+---[draft]---
+
+👉 Buka profil FB di atas → kirim DM
+```
+
+### Tombol Kirim (hanya untuk lead yang ada WA)
+
+Balas notif dengan:
+```
+kirim outreach abc123
+```
+Bot langsung kirim draft ke WA pencari kos. Konfirmasi terkirim muncul sebagai reply.
+
+> **Catatan:** `kirim outreach` = kirim ke **pencari kos** (client).
+> Berbeda dengan `check kirim` = kirim ke **owner kos** di database.
+
+### Batas harian
+```
+MAX_LEADS_PER_DAY = 10  (env var, default 10)
+```
 
 ---
 
-## Menambah Grup Facebook
+## WA Bot — Admin Commands
 
-Edit `config.py`, bagian `FACEBOOK_GROUPS`:
-```python
-FACEBOOK_GROUPS = [
-    "https://www.facebook.com/groups/ID_GRUP_1",
-    "https://www.facebook.com/groups/ID_GRUP_2",
-]
+Semua command dikirim ke **Saved Messages** bot (self-chat).
+
+### Data Listing (Owner Kos)
+| Command | Keterangan |
+|---------|-----------|
+| `list` | 15 listing terbaru |
+| `cari sesetan` | Cari listing by keyword |
+| `#34` | Detail listing #34 |
+| `stat` | Statistik database |
+
+### Cek Ketersediaan Owner Kos
+| Command | Keterangan |
+|---------|-----------|
+| `check` | Lihat owner yang belum dihubungi |
+| `check preview` | Contoh pesan yang akan dikirim ke owner |
+| `check kirim` | Kirim WA ke owner kos (max 10 per run) |
+| `check add 08xxx` | Tambah nomor owner manual ke daftar intercept |
+
+### Verifikasi Owner Kos
+| Command | Keterangan |
+|---------|-----------|
+| `verify #34` | Tandai listing #34 masih kosong |
+
+### SupportKos Outreach (Pencari Kos)
+| Command | Keterangan |
+|---------|-----------|
+| `kirim outreach <id>` | Kirim draft WA ke pencari kos (id ada di notif) |
+
+### Lainnya
+| Command | Keterangan |
+|---------|-----------|
+| `help` | Tampilkan semua command |
+| `help flow` | Panduan alur cek owner |
+
+---
+
+## Disk Monitor
+
+Cron job di server (`/usr/local/bin/disk_monitor.sh`) jalan tiap 30 menit.
+Kalau disk > 85% → kirim WA alert ke `OWNER_NOTIFY_NUMBER` (dengan sound di iPhone).
+
+Untuk trigger manual:
+```bash
+/usr/local/bin/disk_monitor.sh
 ```
 
 ---
 
-## Contoh Komentar yang Di-generate
+## Notifikasi WA — Dua Jalur
 
-```
-Haii Dinda, kebetulan ada kos di Canggu nih! Harga sekitar 2jt/bulan,
-AC + wifi + kamar mandi dalam. Kalau minat bisa PM atau cek @bantukos 😊
-```
+| Jenis | Tujuan | Sound iPhone |
+|-------|--------|-------------|
+| Outreach lead | Saved Messages bot | ❌ (silent) |
+| Disk alert / system | `OWNER_NOTIFY_NUMBER` | ✅ (ada sound) |
 
-Tiap komentar berbeda karena di-generate AI berdasarkan:
-- Nama poster
-- Lokasi yang dicari
-- Listing yang cocok dari database
+Set `OWNER_NOTIFY_NUMBER` di `.env` WA bot → nomor pribadi yang berbeda dari nomor bot.
 
 ---
 
 ## Lihat Log di Server
 
 ```bash
-docker exec -it CONTAINER_ID python3 main.py stats
 docker logs -f --tail=100 CONTAINER_ID
+docker exec -it CONTAINER_ID python3 main.py stats
 ```

@@ -417,6 +417,11 @@ Aturan:
 
 # ── WA Notify ─────────────────────────────────────────────────────────────────
 
+def _short_lead_id(wa_number: str, post_url: str) -> str:
+    """Generate short 6-char ID untuk outreach lead (unik per WA + post)."""
+    return hashlib.md5(f"{wa_number}{post_url}".encode()).hexdigest()[:6]
+
+
 def notify_owner_wa(
     poster_name: str,
     profile_url: str,
@@ -428,10 +433,15 @@ def notify_owner_wa(
     source_type: str = 'post',   # 'post' | 'comment'
 ) -> bool:
     short_post = post_text[:180].replace('\n', ' ')
-    first_name = poster_name.split()[0] if poster_name else '?'
+
+    # Payload tambahan kalau ada nomor WA — owner bisa balas "kirim outreach <id>"
+    outreach_lead = None
+    if wa_number:
+        lead_id = _short_lead_id(wa_number, post_url)
+        outreach_lead = {"id": lead_id, "wa_number": wa_number, "draft": dm_draft}
 
     if wa_number:
-        # Prioritas: ada nomor WA → hubungi langsung via WA
+        lead_id = outreach_lead["id"]
         wa_link = f"https://wa.me/{wa_number}"
         message = (
             f"🎯 *Lead SupportKos — Via WA Langsung!*\n\n"
@@ -442,10 +452,10 @@ def notify_owner_wa(
             f"🔗 Lihat post: {post_url}\n\n"
             f"✍️ *Draft pesan WA:*\n"
             f"---\n{dm_draft}\n---\n\n"
-            f"👉 Klik link WA di atas → paste draft"
+            f"👉 Balas *kirim outreach {lead_id}* untuk langsung kirim\n"
+            f"   atau klik {wa_link} → paste draft manual"
         )
     elif source_type == 'comment':
-        # Komentar seeking — DM via FB ke komentator
         message = (
             f"💬 *Lead SupportKos — Komentar FB*\n\n"
             f"👤 Nama  : {poster_name or '?'}\n"
@@ -455,10 +465,9 @@ def notify_owner_wa(
             f"🔗 Lihat komentar: {post_url}\n\n"
             f"✍️ *Draft DM FB:*\n"
             f"---\n{dm_draft}\n---\n\n"
-            f"👉 Buka profil FB → kirim DM"
+            f"👉 Buka profil FB di atas → kirim DM"
         )
     else:
-        # Post tanpa nomor WA — DM via FB
         message = (
             f"🎯 *Lead SupportKos — FB DM*\n\n"
             f"👤 Nama  : {poster_name or '?'}\n"
@@ -468,11 +477,15 @@ def notify_owner_wa(
             f"🔗 Lihat post: {post_url}\n\n"
             f"✍️ *Draft DM FB:*\n"
             f"---\n{dm_draft}\n---\n\n"
-            f"👉 Buka profil FB → kirim DM"
+            f"👉 Buka profil FB di atas → kirim DM"
         )
 
+    payload = {"message": message}
+    if outreach_lead:
+        payload["outreach_lead"] = outreach_lead
+
     try:
-        resp = requests.post(WA_NOTIFY_URL, json={"message": message}, timeout=10)
+        resp = requests.post(WA_NOTIFY_URL, json=payload, timeout=10)
         if resp.status_code == 200:
             channel = f"WA {wa_number}" if wa_number else "FB DM"
             print(f"   ✅ Notif terkirim [{source_type}] {poster_name} → {channel}")
