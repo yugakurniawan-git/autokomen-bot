@@ -237,17 +237,63 @@ def _clean_price(price: str) -> str:
         return ''
 
 
+_ADMIN_SUFFIXES = re.compile(
+    r',?\s*(Bali|Badung|Gianyar|Tabanan|Denpasar\s*(Barat|Selatan|Utara|Timur)?|'
+    r'Denbar|Densel|Denut|Kabupaten|Kota|Indonesia)\s*$',
+    re.IGNORECASE,
+)
+_STREET_RE = re.compile(
+    r'((?:jl\.?|jalan|gg\.?|gang|perumahan|komplek|dkt\.?|dekat|belakang|depan|sebelah)'
+    r'[\w\s\.,/-]{3,40})',
+    re.IGNORECASE,
+)
+
+
+def _extract_street_detail(location: str, raw_text: str, base_area: str) -> str:
+    """
+    Coba ekstrak detail lokasi spesifik (jalan/landmark).
+    Return nama area + detail kalau ada, atau nama area saja.
+    """
+    # Hilangkan suffix administratif dari location field
+    loc_clean = _ADMIN_SUFFIXES.sub('', location).strip().strip(',').strip()
+
+    # Kalau location sudah punya info jalan/gang/dekat — pakai itu
+    if _STREET_RE.search(loc_clean):
+        return loc_clean[:60]
+
+    # Coba cari dari raw_text: ambil 1 kalimat yang punya kata kunci lokasi detail
+    if raw_text:
+        for line in raw_text.splitlines():
+            line = line.strip()
+            if not line or len(line) > 120:
+                continue
+            if base_area.lower() not in line.lower():
+                continue
+            m = _STREET_RE.search(line)
+            if m:
+                detail = m.group(1).strip().rstrip('.,').strip()
+                return f"{base_area} ({detail[:40]})"
+
+    # Tidak ada detail — kembalikan nama area saja (bukan "Kerobokan, Badung")
+    # Kalau loc_clean sama dengan atau mengandung base_area, pakai base_area
+    if base_area.lower() in loc_clean.lower():
+        return base_area
+    return loc_clean or base_area
+
+
 def _get_listings_for_area(location: str, limit: int = 3) -> list[dict]:
     """
-    Ambil listing dari bantukos.db dengan lokasi spesifik + harga bersih.
-    Prioritas: lokasi yang punya detail (jalan/area spesifik).
+    Ambil listing dari bantukos.db dengan:
+    - Lokasi detail (jalan/landmark) jika ada, otherwise nama area saja
+    - Harga bersih
+    - Nomor WA/kontak owner
     """
     try:
         conn = sqlite3.connect(BANTUKOS_DB_PATH)
         area_kw = location.lower().split()[0] if location else ''
-        # Ambil lebih banyak, lalu filter & sort di Python
         rows = conn.execute("""
-            SELECT location, price
+            SELECT location, price, COALESCE(contact,'') as contact,
+                   COALESCE(substr(raw_text,1,600),'') as raw_text
             FROM posts
             WHERE status IN ('captioned', 'posted')
               AND LOWER(location) LIKE ?
@@ -255,25 +301,36 @@ def _get_listings_for_area(location: str, limit: int = 3) -> list[dict]:
               AND price NOT LIKE '%Hubungi%'
               AND price NOT LIKE '%N/A%'
               AND location NOT LIKE '%Bali%'
-            ORDER BY length(location) DESC, RANDOM()
-            LIMIT 20
+            ORDER BY RANDOM()
+            LIMIT 30
         """, (f'%{area_kw}%',)).fetchall()
         conn.close()
 
         results = []
         seen_locs = set()
-        for loc_raw, price_raw in rows:
+        for loc_raw, price_raw, contact_raw, raw_text in rows:
             if not loc_raw:
                 continue
             clean_p = _clean_price(price_raw)
             if not clean_p:
                 continue
-            # Deduplikasi per lokasi
-            loc_key = loc_raw.lower().strip()
+
+            loc_display = _extract_street_detail(loc_raw, raw_text, location)
+            loc_key = loc_display.lower().strip()
             if loc_key in seen_locs:
                 continue
             seen_locs.add(loc_key)
-            results.append({'location': loc_raw.strip(), 'price': clean_p})
+
+            # Ambil nomor WA dari contact field
+            wa = ''
+            if contact_raw:
+                wa_m = re.search(r'(\+?62[\d\s-]{8,14}|0[\d\s-]{9,13})', contact_raw)
+                if wa_m:
+                    wa = re.sub(r'[\s-]', '', wa_m.group(1))
+                    if wa.startswith('0'):
+                        wa = '62' + wa[1:]
+
+            results.append({'location': loc_display, 'price': clean_p, 'wa': wa})
             if len(results) >= limit:
                 break
         return results
@@ -287,10 +344,24 @@ def _get_listings_for_area(location: str, limit: int = 3) -> list[dict]:
 BANTUKOS_URL = "https://bantukos.com/listings"
 
 
+_CLOSING = (
+    "kalo mau lihat area lain, bisa cek aja di bantukos.com/listings\n\n"
+    "btw, saya bukan calo ya kak, harga yang saya infokan real dari owner kost, "
+    "saya disini cuman bantu nawarin aja, atau kalo kakak butuh bantuan — "
+    "mungkin kayak gak ada waktu buat cek kost sebelum DP, atau lagi diluar kota — aku bisa bantu 🙏"
+)
+
+
 def _format_listings_block(listings: list[dict]) -> str:
     if not listings:
         return ''
-    return '\n'.join(f"• {l['location']} — {l['price']}" for l in listings)
+    lines = []
+    for l in listings:
+        line = f"• {l['location']} — {l['price']}"
+        if l.get('wa'):
+            line += f" (WA owner: {l['wa']})"
+        lines.append(line)
+    return '\n'.join(lines)
 
 
 def generate_dm_draft(poster_name: str, post_text: str, location: str, via_wa: bool = False) -> str:
@@ -301,70 +372,47 @@ def generate_dm_draft(poster_name: str, post_text: str, location: str, via_wa: b
     listings       = _get_listings_for_area(loc)
     listings_block = _format_listings_block(listings)
 
-    # Fallback templates — dipakai kalau OpenAI gagal
+    # Bagian pembuka (listing) — OpenAI untuk nada natural, fallback kalau gagal
     if listings_block:
-        listing_section = (
-            f"\n\nAda beberapa yang lagi kosong:\n{listings_block}\n\n"
-            f"Mau cek area lain atau lebih banyak? Langsung aja ke bantukos.com/listings."
-        )
+        listing_intro = f"Ada beberapa yang lagi kosong di {loc}:\n{listings_block}"
     else:
-        listing_section = f"\n\nUntuk lihat list lengkapnya bisa cek bantukos.com/listings."
-
-    if via_wa:
-        fallback = (
-            f"Halo {name_part}, kebetulan aku tau ada kos di {loc} yang lagi kosong 👋"
-            f"{listing_section}\n\n"
-            f"Oh iya, aku bukan calo ya — aku bisa bantu survei kondisi aslinya dulu sebelum kamu DP, "
-            f"jadi nggak kaget pas udah bayar 🙏 Mau?"
-        )
-    else:
-        fallback = (
-            f"Halo {name_part}! Kebetulan tau ada kos di {loc} yang lagi kosong 👋"
-            f"{listing_section}\n\n"
-            f"Btw aku bukan calo ya. Tapi kalau mau, aku bisa bantu cek kondisi asli kosnya dulu "
-            f"sebelum kamu DP — jadi tau beneran kayak gimana sebelum bayar. Tertarik?"
-        )
+        listing_intro = f"Bisa cek listing kos di {loc} di bantukos.com/listings ya."
 
     if not OPENAI_API_KEY:
-        return fallback
-
-    listing_ctx = (
-        f"Kos yang tersedia di {loc}:\n{listings_block}\n\nLink semua listing: bantukos.com/listings"
-        if listings_block else
-        f"Tidak ada listing spesifik. Arahkan ke: bantukos.com/listings"
-    )
-    channel = "WhatsApp (4-5 kalimat)" if via_wa else "Facebook DM (4-6 kalimat)"
+        opener = f"Halo {name_part}, kebetulan tau ada kos di {loc} nih 👋\n\n{listing_intro}"
+        return f"{opener}\n\n{_CLOSING}"
 
     try:
         from openai import OpenAI
         client = OpenAI(api_key=OPENAI_API_KEY)
-        prompt = f"""Kamu seorang teman yang genuinely mau bantu orang cari kos, bukan agen properti.
+        prompt = f"""Kamu seorang teman yang genuinely mau bantu orang cari kos.
 
 Seseorang bernama "{name_part}" lagi cari kos di {loc}.
 Post mereka: "{post_text[:200]}"
 
-{listing_ctx}
+Tulis HANYA bagian pembuka pesannya saja (2-3 kalimat): sapaan natural + sebutkan listing di bawah ini secara apa adanya:
 
-Tulis pesan {channel} yang:
-- WAJIB: sebutkan listing kos di atas satu per satu secara natural (nama lokasi spesifik + harga)
-- WAJIB: kasih tahu kalau mau lihat lebih banyak atau area lain bisa cek bantukos.com/listings
-- WAJIB: bilang dengan jelas bahwa kamu BUKAN CALO, tapi bisa bantu survei/cek kondisi kos sebelum ditempatin/DP
-- Terasa kayak ditulis orang biasa — santai, natural, bukan iklan
-- Bahasa sehari-hari, boleh campur gaul
-- Tutup dengan pertanyaan singkat yang natural
+{listing_intro}
 
-Tulis isi pesan saja, tanpa penjelasan atau tanda kutip."""
+Aturan:
+- Santai, kayak teman, bukan agen
+- Sebutkan listing di atas apa adanya (lokasi + harga + WA owner kalau ada)
+- Bahasa gaul/sehari-hari
+- JANGAN tambahkan penutup atau ajakan apapun — bagian itu sudah ditulis terpisah
+- Tulis isi pesan saja, tanpa tanda kutip"""
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
+            max_tokens=200,
             temperature=1.0,
         )
-        return response.choices[0].message.content.strip().strip('"').strip("'")
+        opener = response.choices[0].message.content.strip().strip('"').strip("'")
+        return f"{opener}\n\n{_CLOSING}"
     except Exception as e:
         print(f"⚠️ OpenAI gagal, pakai template: {e}")
-        return fallback
+        opener = f"Halo {name_part}, kebetulan tau ada kos di {loc} nih 👋\n\n{listing_intro}"
+        return f"{opener}\n\n{_CLOSING}"
 
 
 # ── WA Notify ─────────────────────────────────────────────────────────────────
