@@ -13,6 +13,10 @@ FACEBOOK_GROUPS = []
 DB_PATH          = "data/autokomen.db"
 BANTUKOS_DB_PATH = os.getenv("BANTUKOS_DB_PATH", "../bantukos-bot/data/bantukos.db")
 
+# ── Outreach (SupportKos) ─────────────────────────────────────────────────────
+WA_NOTIFY_URL      = os.getenv("WA_NOTIFY_URL", "http://bantukos-wa-bot:3001/notify")
+MAX_LEADS_PER_DAY  = int(os.getenv("MAX_LEADS_PER_DAY", "10"))
+
 # ── Keamanan — batas harian ──────────────────────────────────────────────────
 MAX_COMMENTS_PER_DAY  = 8    # max komentar per hari
 MIN_DELAY_AFTER_POST  = 3    # menit — tunggu sebelum komentar (agar tidak terlalu cepat)
