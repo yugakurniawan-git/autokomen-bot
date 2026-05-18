@@ -18,7 +18,7 @@ from playwright.sync_api import sync_playwright
 
 from config import (
     FB_SESSION_PATH, FACEBOOK_GROUPS, BALI_AREAS, OPENAI_API_KEY,
-    WA_NOTIFY_URL, MAX_LEADS_PER_DAY,
+    WA_NOTIFY_URL, MAX_LEADS_PER_DAY, BANTUKOS_DB_PATH,
 )
 from scanner import _is_seeking, _get_post_text, _post_id_from_url, discover_group_urls
 
@@ -203,57 +203,109 @@ def _extract_location(text: str) -> str:
     return "Bali"
 
 
+# ── Listing lookup ────────────────────────────────────────────────────────────
+
+def _get_listings_for_area(location: str, limit: int = 3) -> list[dict]:
+    """Ambil listing dari bantukos.db yang lokasinya cocok dengan area yang dicari."""
+    try:
+        conn = sqlite3.connect(BANTUKOS_DB_PATH)
+        area_kw = location.lower().split()[0] if location else ''
+        rows = conn.execute("""
+            SELECT location, price
+            FROM posts
+            WHERE status IN ('captioned', 'posted')
+              AND price IS NOT NULL AND price != ''
+              AND LOWER(location) LIKE ?
+            ORDER BY RANDOM()
+            LIMIT ?
+        """, (f'%{area_kw}%', limit)).fetchall()
+        conn.close()
+        return [{'location': r[0], 'price': r[1]} for r in rows if r[0] and r[1]]
+    except Exception as e:
+        print(f"⚠️ Gagal ambil listing untuk draft: {e}")
+        return []
+
+
+def _format_listings_snippet(listings: list[dict]) -> str:
+    """Format listing jadi teks pendek untuk dimasukkan ke draft."""
+    if not listings:
+        return ''
+    lines = [f"- {l['location']} · {l['price']}" for l in listings]
+    return '\n'.join(lines)
+
+
 # ── DM Draft Generator ────────────────────────────────────────────────────────
 
-_WA_DRAFTS = [
-    "Halo {name}! Aku lihat kamu lagi cari kos di {location}. Aku bisa bantu survei kondisi kos sebelum kamu DP — foto terkini, fasilitas asli, lingkungan sekitar. Mau aku bantu?",
-    "Halo {name}, masih cari kos di {location}? Aku bisa cek kondisi aslinya dulu sebelum kamu bayar, biar nggak kaget. Tertarik?",
-    "Hai {name}! Lagi cari kos di {location} ya? Aku bisa bantu survey dulu sebelum DP. Bisa foto dan cek kondisi asli kosnya. Mau?",
-]
-
-_FB_DRAFTS = [
-    "Halo {name}! Aku lihat postinganmu lagi cari kos di {location}.\n\nAku bisa bantu survei kondisi kos sebelum kamu DP — foto terkini, fasilitas asli, lingkungan sekitar. Gratis konsultasi. Mau aku bantu?",
-    "Hai {name}, masih cari kos di {location} ya?\n\nAku biasa survei kos langsung ke lapangan — jadi kamu bisa tau kondisi aslinya sebelum bayar. Kalau tertarik, chat aku ya.",
-    "Halo {name}! Lagi cari kos di {location}?\n\nAku bisa bantu survei dan foto kondisi kos buat kamu sebelum DP. Biar nggak kaget pas udah bayar. Mau dibantu?",
-]
+BANTUKOS_URL = "https://bantukos.com/listings"
 
 
 def generate_dm_draft(poster_name: str, post_text: str, location: str, via_wa: bool = False) -> str:
     first_name = poster_name.split()[0] if poster_name else "Kak"
     loc = location or "Bali"
-    fallbacks = _WA_DRAFTS if via_wa else _FB_DRAFTS
+
+    listings = _get_listings_for_area(loc)
+    listings_text = _format_listings_snippet(listings)
+
+    # Fallback templates — dipakai kalau OpenAI gagal
+    if listings_text:
+        listing_block = f"\n\nBeberapa yang lagi kosong di {loc}:\n{listings_text}\n\nInfo lengkapnya bisa cek di {BANTUKOS_URL}"
+    else:
+        listing_block = f"\n\nCek juga listing lengkapnya di {BANTUKOS_URL}"
+
+    if via_wa:
+        fallback = (
+            f"Halo {first_name}, kebetulan aku tau ada beberapa kos di {loc} yang lagi kosong 👋"
+            f"{listing_block}\n\n"
+            f"Kalau mau aku bantuin survei dulu sebelum DP, bilang aja ya. Bisa foto kondisi aslinya biar kamu nggak kaget pas udah bayar 🙏"
+        )
+    else:
+        fallback = (
+            f"Halo {first_name}! Kebetulan aku tau ada beberapa kos di {loc} yang lagi kosong 👋"
+            f"{listing_block}\n\n"
+            f"Kalau mau, aku juga bisa bantu survei kondisi aslinya dulu sebelum kamu DP. Jadi kamu tau beneran kayak gimana sebelum bayar. Tertarik?"
+        )
 
     if not OPENAI_API_KEY:
-        return random.choice(fallbacks).format(name=first_name, location=loc)
+        return fallback
 
-    channel = "WhatsApp (singkat, 2-3 kalimat)" if via_wa else "Facebook DM (3-5 kalimat)"
+    listing_ctx = (
+        f"Kos yang tersedia di {loc}:\n{listings_text}\n\nLink listing lengkap: {BANTUKOS_URL}"
+        if listings_text else
+        f"Link listing: {BANTUKOS_URL}"
+    )
+    channel = "WhatsApp (2-3 kalimat, ringkas)" if via_wa else "Facebook DM (3-5 kalimat)"
+
     try:
         from openai import OpenAI
         client = OpenAI(api_key=OPENAI_API_KEY)
-        prompt = f"""Kamu penulis pesan yang sopan dan natural.
+        prompt = f"""Kamu seorang teman yang tau info kos dan mau bantu orang cari kos.
 
-Seseorang bernama "{first_name}" mencari kos di {loc}:
-"{post_text[:250]}"
+Seseorang bernama "{first_name}" lagi cari kos di {loc}.
+Post mereka: "{post_text[:200]}"
 
-Tulis draft pesan {channel} yang:
-- Menawarkan jasa survei/inspeksi kos (SupportKos) sebelum DP
-- Terasa seperti teman yang genuinely mau bantu, bukan sales
-- Bahasa santai tapi sopan, campur Indonesia/gaul oke
-- Tidak sebut harga, tidak ada link/hashtag
-- Tutup dengan ajakan singkat
+{listing_ctx}
 
-Tulis isi pesan saja, tanpa penjelasan."""
+Tulis pesan {channel} yang:
+- Terasa ditulis manusia beneran, bukan agen properti atau AI
+- Sebutkan 1-2 kos yang tersedia di atas secara natural (lokasi + harga), jangan listing semua
+- Sertakan link {BANTUKOS_URL} dengan natural (misal "cek di bantukos.com/listings")
+- Tawarin juga jasa survei sebelum DP — tapi kasual, kayak teman yang genuinely mau bantu
+- Bahasa sehari-hari, boleh campur gaul, tidak perlu formal
+- Jangan sebut "SupportKos" atau nama layanan apapun, cukup bilang "aku bisa bantu survei/cek"
+- Tutup dengan pertanyaan singkat biar terasa natural (bukan CTA hard-sell)
+
+Tulis isi pesan saja, tanpa penjelasan atau tanda kutip."""
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=180,
-            temperature=0.9,
+            max_tokens=220,
+            temperature=1.0,
         )
         return response.choices[0].message.content.strip().strip('"').strip("'")
     except Exception as e:
         print(f"⚠️ OpenAI gagal, pakai template: {e}")
-        return random.choice(fallbacks).format(name=first_name, location=loc)
+        return fallback
 
 
 # ── WA Notify ─────────────────────────────────────────────────────────────────
