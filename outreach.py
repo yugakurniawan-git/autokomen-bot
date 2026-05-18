@@ -515,34 +515,47 @@ def _handle_lead(page, post_url: str, text: str, poster_name: str,
     return ok
 
 
-def _process_post_outreach(page, post_url: str) -> int:
+def _process_post_main(page, post_url: str) -> int:
     """
-    Proses satu post:
-    1. Cek teks post utama — kalau seeking, kirim lead (WA jika ada nomor, FB DM jika tidak)
-    2. Cek komentar — kalau ada yang seeking, kirim lead FB DM
-    Return jumlah leads baru yang berhasil dikirim.
+    Pass 1 — cek teks post utama saja.
+    Kalau orang posting cari kos: kirim lead (WA jika ada nomor, FB DM jika tidak).
+    Return 1 kalau lead berhasil dikirim, 0 jika tidak.
     """
-    post_id   = _post_id_from_url(post_url)
-    post_key  = f"outreach_post_{post_id}"
-    leads     = 0
+    post_id  = _post_id_from_url(post_url)
+    post_key = f"outreach_post_{post_id}"
+
+    if already_notified(post_key):
+        return 0
 
     try:
         page.goto(post_url, wait_until="domcontentloaded", timeout=20000)
         time.sleep(random.randint(2, 4))
 
-        # ── 1. Post utama ──────────────────────────────────────────────────────
-        if not already_notified(post_key):
-            post_text = _get_post_text(page)
-            if post_text and _is_seeking(post_text):
-                poster_name, profile_url = _extract_poster_info(page)
-                if _handle_lead(page, post_url, post_text, poster_name,
-                                profile_url, post_key, source_type='post'):
-                    leads += 1
+        post_text = _get_post_text(page)
+        if not post_text or not _is_seeking(post_text):
+            return 0
 
-        if count_leads_today() >= MAX_LEADS_PER_DAY:
-            return leads
+        poster_name, profile_url = _extract_poster_info(page)
+        return 1 if _handle_lead(page, post_url, post_text, poster_name,
+                                 profile_url, post_key, source_type='post') else 0
+    except Exception as e:
+        print(f"   ⚠️ Error cek post utama {post_url}: {e}")
+        return 0
 
-        # ── 2. Komentar di post ────────────────────────────────────────────────
+
+def _process_post_comments(page, post_url: str) -> int:
+    """
+    Pass 2 — scan komentar di satu post.
+    Cari komentar yang isinya nanya/cari kos (misal "ada yang daerah kerobokan?").
+    Return jumlah leads baru yang berhasil dikirim.
+    """
+    post_id = _post_id_from_url(post_url)
+    leads   = 0
+
+    try:
+        page.goto(post_url, wait_until="domcontentloaded", timeout=20000)
+        time.sleep(random.randint(2, 4))
+
         comments = _extract_comments_info(page)
         for c in comments:
             if count_leads_today() >= MAX_LEADS_PER_DAY:
@@ -556,9 +569,7 @@ def _process_post_outreach(page, post_url: str) -> int:
             if already_notified(c_key):
                 continue
 
-            # URL komentar: gunakan permalink jika ada, fallback ke post URL
             comment_url = c.get('commentUrl') or post_url
-
             if _handle_lead(page, comment_url, c_text,
                             c.get('name', ''), c.get('profileUrl', ''),
                             c_key, source_type='comment'):
@@ -566,13 +577,17 @@ def _process_post_outreach(page, post_url: str) -> int:
             time.sleep(random.randint(1, 3))
 
     except Exception as e:
-        print(f"   ⚠️ Error outreach post {post_url}: {e}")
+        print(f"   ⚠️ Error scan komentar {post_url}: {e}")
 
     return leads
 
 
 def _scan_group_outreach(page, group_url: str) -> int:
-    """Scan satu grup untuk outreach leads. Return jumlah leads ditemukan."""
+    """
+    Scan satu grup dalam dua pass:
+    Pass 1 — semua post utama yang cari kos (prioritas, ada WA → via WA, tidak ada → FB DM)
+    Pass 2 — semua komentar di semua post (cari yang nanya/cari kos di kolom komentar)
+    """
     try:
         page.goto(group_url, wait_until="domcontentloaded", timeout=30000)
         time.sleep(random.randint(3, 6))
@@ -600,10 +615,20 @@ def _scan_group_outreach(page, group_url: str) -> int:
     print(f"   🔎 {len(post_links)} post ditemukan")
     total = 0
 
+    # ── Pass 1: post utama yang cari kos ──────────────────────────────────────
+    print("   📌 Pass 1: cek post utama...")
+    for post_url in post_links:
+        if count_leads_today() >= MAX_LEADS_PER_DAY:
+            return total
+        total += _process_post_main(page, post_url)
+        time.sleep(random.randint(2, 5))
+
+    # ── Pass 2: komentar di semua post ────────────────────────────────────────
+    print("   💬 Pass 2: scan komentar semua post...")
     for post_url in post_links:
         if count_leads_today() >= MAX_LEADS_PER_DAY:
             break
-        total += _process_post_outreach(page, post_url)
+        total += _process_post_comments(page, post_url)
         time.sleep(random.randint(2, 5))
 
     return total
