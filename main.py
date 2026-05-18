@@ -61,12 +61,12 @@ def run_scheduled():
     init_outreach_db()
     print("\n🤖 Bantukos AutoKomen Bot dimulai!")
     print(f"   Komentar scan tiap : {SCAN_INTERVAL_MINUTES} menit")
-    print(f"   Outreach scan tiap : 60 menit")
+    print(f"   Outreach scan tiap : 15 menit")
     print(f"   Max komentar/hari  : {MAX_COMMENTS_PER_DAY}")
     print("   Tekan Ctrl+C untuk berhenti\n")
 
     schedule.every(SCAN_INTERVAL_MINUTES).minutes.do(scan_and_comment)
-    schedule.every(60).minutes.do(run_outreach)
+    schedule.every(15).minutes.do(run_outreach)
 
     # Langsung scan sekali saat start
     scan_and_comment()
